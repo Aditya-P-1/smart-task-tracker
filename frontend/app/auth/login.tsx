@@ -9,6 +9,7 @@ import { AuthTextField } from '../../src/features/auth/components/auth-text-fiel
 import { useLoginMutation } from '../../src/features/auth/hooks/use-auth-mutations';
 import { hasActiveSession, saveAuthSession } from '../../src/features/auth/storage/auth-session';
 import type { LoginFormValues } from '../../src/features/auth/types/auth';
+import { prefetchAuthenticatedData } from '../../src/query/prefetch-authenticated-data';
 import { getApiErrorMessage } from '../../src/features/auth/utils/api-error';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -35,6 +36,7 @@ export default function LoginScreen() {
   const submitLogin = handleSubmit(async (values) => {
     const result = await loginMutation.mutateAsync(values);
     saveAuthSession(result);
+    void prefetchAuthenticatedData();
     router.replace('/(tabs)');
   });
 

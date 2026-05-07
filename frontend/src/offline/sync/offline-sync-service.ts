@@ -6,6 +6,7 @@ import { createHabit, deleteHabit, checkInHabit } from '../../features/habits/ap
 import { getCachedHabitList } from '../../features/habits/storage/habit-cache';
 import { decorateHabit } from '../../features/habits/utils/habit';
 import {
+  invalidateHabitListQuery,
   habitQueryKeys,
   removeHabit,
   replaceHabit,
@@ -15,6 +16,7 @@ import {
 import { createTask, deleteTask, updateTask } from '../../features/tasks/api/tasks';
 import { getCachedTaskList } from '../../features/tasks/storage/task-cache';
 import {
+  invalidateTaskListQuery,
   removeTask,
   replaceTask,
   setCachedTaskQueryData,
@@ -28,7 +30,7 @@ import { enqueueOfflineAction } from '../queue/action-queue';
 import {
   clearOfflineQueueState,
   getOfflineQueueState,
-  saveOfflineQueueState,
+  updateOfflineQueueState,
 } from '../queue/queue-storage';
 import type {
   OfflineAction,
@@ -39,6 +41,11 @@ import type {
 
 let isSyncInProgress = false;
 let scheduledSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+type PendingInvalidations = {
+  habits: boolean;
+  tasks: boolean;
+};
 
 function getResolvedEntityId(state: OfflineQueueState, targetId: string) {
   return state.entityIdMap[targetId] ?? targetId;
@@ -79,6 +86,38 @@ function shouldRetryError(error: unknown) {
 
 function removeActionById(actions: OfflineAction[], actionId: string) {
   return actions.filter((action) => action.id !== actionId);
+}
+
+function shouldInvalidateTasks(action: OfflineAction) {
+  return action.type === 'CREATE_TASK' || action.type === 'UPDATE_TASK' || action.type === 'DELETE_TASK';
+}
+
+function shouldInvalidateHabits(action: OfflineAction) {
+  return action.type === 'CREATE_HABIT' || action.type === 'DELETE_HABIT' || action.type === 'CHECKIN_HABIT';
+}
+
+function mergeLatestQueueState(
+  latestState: OfflineQueueState,
+  nextState: OfflineQueueState,
+) {
+  return pruneEntityIdMap({
+    ...latestState,
+    ...nextState,
+    entityIdMap: {
+      ...latestState.entityIdMap,
+      ...nextState.entityIdMap,
+    },
+  });
+}
+
+function persistQueueStateUpdate(
+  nextState: OfflineQueueState,
+  updater: (latestState: OfflineQueueState) => OfflineQueueState,
+) {
+  return updateOfflineQueueState((latestState) => {
+    const mergedState = mergeLatestQueueState(latestState, nextState);
+    return updater(mergedState);
+  });
 }
 
 function pruneEntityIdMap(state: OfflineQueueState): OfflineQueueState {
@@ -361,6 +400,27 @@ function getActionResultDelayMs(state: OfflineQueueState) {
   return Math.max(retryTimestamps[0] - Date.now(), 0);
 }
 
+function hasReadyAction(state: OfflineQueueState, currentUserId: string) {
+  return state.actions.some((action) => {
+    if (action.userId !== currentUserId) {
+      return false;
+    }
+
+    if (!action.nextRetryAt) {
+      return true;
+    }
+
+    return new Date(action.nextRetryAt).getTime() <= Date.now();
+  });
+}
+
+async function flushPendingInvalidations(userId: string, pendingInvalidations: PendingInvalidations) {
+  await Promise.allSettled([
+    pendingInvalidations.tasks ? invalidateTaskListQuery(appQueryClient, userId) : Promise.resolve(),
+    pendingInvalidations.habits ? invalidateHabitListQuery(appQueryClient, userId) : Promise.resolve(),
+  ]);
+}
+
 export async function processOfflineQueue() {
   if (isSyncInProgress || !isNetworkOnline()) {
     return new Map<string, ProcessQueueActionResult>();
@@ -372,9 +432,12 @@ export async function processOfflineQueue() {
   const results = new Map<string, ProcessQueueActionResult>();
 
   try {
-    let state = getOfflineQueueState();
+    let state = pruneEntityIdMap(getOfflineQueueState());
     const currentUser = getStoredAuthUser();
-    let stateChanged = false;
+    const pendingInvalidations: PendingInvalidations = {
+      habits: false,
+      tasks: false,
+    };
 
     if (!currentUser?.id || state.actions.length === 0) {
       return results;
@@ -385,7 +448,16 @@ export async function processOfflineQueue() {
     for (const action of state.actions) {
       if (action.userId !== currentUser.id) {
         nextActions = removeActionById(nextActions, action.id);
-        stateChanged = true;
+        state = persistQueueStateUpdate(
+          {
+            ...state,
+            actions: nextActions,
+          },
+          (latestState) => ({
+            ...latestState,
+            actions: removeActionById(latestState.actions, action.id),
+          }),
+        );
         continue;
       }
 
@@ -402,12 +474,25 @@ export async function processOfflineQueue() {
 
       if (actionResult.status === 'synced' || actionResult.status === 'discarded') {
         nextActions = removeActionById(nextActions, action.id);
-        state = pruneEntityIdMap({
-          ...state,
-          actions: nextActions,
-        });
-        stateChanged = true;
-        saveOfflineQueueState(state);
+        state = persistQueueStateUpdate(
+          {
+            ...state,
+            actions: nextActions,
+          },
+          (latestState) => ({
+            ...latestState,
+            actions: removeActionById(latestState.actions, action.id),
+          }),
+        );
+
+        if (shouldInvalidateTasks(action)) {
+          pendingInvalidations.tasks = true;
+        }
+
+        if (shouldInvalidateHabits(action)) {
+          pendingInvalidations.habits = true;
+        }
+
         continue;
       }
 
@@ -425,36 +510,48 @@ export async function processOfflineQueue() {
             : queuedAction,
         );
 
-        state = pruneEntityIdMap({
-          ...state,
-          actions: nextActions,
-        });
-        stateChanged = true;
-        saveOfflineQueueState(state);
+        state = persistQueueStateUpdate(
+          {
+            ...state,
+            actions: nextActions,
+          },
+          (latestState) => ({
+            ...latestState,
+            actions: latestState.actions.map((queuedAction) =>
+              queuedAction.id === action.id
+                ? {
+                    ...queuedAction,
+                    attemptCount: queuedAction.attemptCount + 1,
+                    lastErrorMessage: 'Retry scheduled after a failed sync attempt.',
+                    nextRetryAt: new Date(
+                      Date.now() + buildRetryDelayMs(queuedAction.attemptCount + 1),
+                    ).toISOString(),
+                  }
+                : queuedAction,
+            ),
+          }),
+        );
         break;
       }
     }
 
-    if (nextActions.length === 0) {
+    const latestState = pruneEntityIdMap(getOfflineQueueState());
+
+    if (latestState.actions.length === 0) {
       clearOfflineQueueState();
     } else {
-      if (stateChanged) {
-        state = pruneEntityIdMap({
-          ...state,
-          actions: nextActions,
-        });
-        saveOfflineQueueState(state);
-      }
+      if (hasReadyAction(latestState, currentUser.id)) {
+        scheduleOfflineSync(0);
+      } else {
+        const nextDelayMs = getActionResultDelayMs(latestState);
 
-      const nextDelayMs = getActionResultDelayMs({
-        ...state,
-        actions: nextActions,
-      });
-
-      if (typeof nextDelayMs === 'number') {
-        scheduleOfflineSync(nextDelayMs);
+        if (typeof nextDelayMs === 'number') {
+          scheduleOfflineSync(nextDelayMs);
+        }
       }
     }
+
+    await flushPendingInvalidations(currentUser.id, pendingInvalidations);
 
     return results;
   } finally {

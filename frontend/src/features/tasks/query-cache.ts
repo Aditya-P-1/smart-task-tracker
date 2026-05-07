@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 
+import { fetchTasks } from './api/tasks';
 import { saveTaskListCache } from './storage/task-cache';
 import type { CreateTaskPayload, TaskListItem, UpdateTaskPayload } from './types/task';
 
@@ -91,4 +92,19 @@ export function buildOptimisticTaskUpdate(task: TaskListItem, values: UpdateTask
     title: values.title ?? task.title,
     updatedAt: new Date().toISOString(),
   };
+}
+
+export async function prefetchTaskList(queryClient: QueryClient, userId: string) {
+  return queryClient.prefetchQuery({
+    queryFn: fetchTasks,
+    queryKey: taskQueryKeys.list(userId),
+    staleTime: 30_000,
+  });
+}
+
+export async function invalidateTaskListQuery(queryClient: QueryClient, userId: string) {
+  return queryClient.invalidateQueries({
+    queryKey: taskQueryKeys.list(userId),
+    refetchType: 'active',
+  });
 }

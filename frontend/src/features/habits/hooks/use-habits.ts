@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getStoredAuthUser } from '../../auth/storage/auth-session';
 import { createOfflineAction } from '../../../offline/queue/action-queue';
+import { applyQueuedHabitActions } from '../../../offline/queue/query-overlays';
 import { enqueueAndSyncAction } from '../../../offline/sync/offline-sync-service';
 import type { QueueSubmissionResult } from '../../../offline/types';
+import { usePersistedQueryData } from '../../../query/use-persisted-query-data';
 import { fetchHabits } from '../api/habits';
 import {
   habitQueryKeys,
@@ -67,14 +68,15 @@ export function useHabits() {
     initialDataUpdatedAt: cachedHabits ? new Date(cachedHabits.updatedAt).getTime() : undefined,
     queryFn: fetchHabits,
     queryKey: userId ? habitQueryKeys.list(userId) : habitQueryKeys.all,
-    select: (habits) => sortHabits(habits.map((habit) => decorateHabit(habit))),
+    refetchInterval: userId ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    select: (habits) => {
+      const offlineAwareHabits = userId ? applyQueuedHabitActions(habits, userId) : habits;
+      return sortHabits(offlineAwareHabits.map((habit) => decorateHabit(habit)));
+    },
   });
 
-  useEffect(() => {
-    if (userId && query.data) {
-      saveHabitListCache(userId, query.data);
-    }
-  }, [query.data, userId]);
+  usePersistedQueryData(userId ?? null, query.data, saveHabitListCache);
 
   return {
     ...query,
@@ -92,6 +94,7 @@ export function useCreateHabit() {
     CreateHabitMutationVariables,
     CreateHabitMutationContext
   >({
+    mutationKey: ['habits', 'create'],
     mutationFn: ({ clientHabitId, payload, userId }) =>
       enqueueAndSyncAction<Habit>(
         createOfflineAction({
@@ -176,6 +179,7 @@ export function useCheckInHabit() {
     CheckInHabitInput,
     RestoreHabitContext | null
   >({
+    mutationKey: ['habits', 'check-in'],
     mutationFn: ({ habitId }) => {
       const dayKey = getHabitDayKey();
 
@@ -261,6 +265,7 @@ export function useDeleteHabit() {
     DeleteHabitInput,
     RestoreDeletedHabitContext | null
   >({
+    mutationKey: ['habits', 'delete'],
     mutationFn: ({ habitId }) =>
       enqueueAndSyncAction(
         createOfflineAction({

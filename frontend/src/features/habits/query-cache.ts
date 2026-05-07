@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 
+import { fetchHabits } from './api/habits';
 import { saveHabitListCache } from './storage/habit-cache';
 import type { HabitListItem } from './types/habit';
 import { decorateHabit, sortHabits } from './utils/habit';
@@ -34,4 +35,19 @@ export function upsertHabit(habits: HabitListItem[], nextHabit: HabitListItem) {
   return hasHabit
     ? replaceHabit(habits, nextHabit.id, nextHabit)
     : [...habits, nextHabit];
+}
+
+export async function prefetchHabitList(queryClient: QueryClient, userId: string) {
+  return queryClient.prefetchQuery({
+    queryFn: fetchHabits,
+    queryKey: habitQueryKeys.list(userId),
+    staleTime: 30_000,
+  });
+}
+
+export async function invalidateHabitListQuery(queryClient: QueryClient, userId: string) {
+  return queryClient.invalidateQueries({
+    queryKey: habitQueryKeys.list(userId),
+    refetchType: 'active',
+  });
 }

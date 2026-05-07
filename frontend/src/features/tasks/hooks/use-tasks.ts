@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getStoredAuthUser } from '../../auth/storage/auth-session';
 import { createOfflineAction } from '../../../offline/queue/action-queue';
+import { applyQueuedTaskActions } from '../../../offline/queue/query-overlays';
 import { enqueueAndSyncAction } from '../../../offline/sync/offline-sync-service';
 import type { QueueSubmissionResult } from '../../../offline/types';
+import { usePersistedQueryData } from '../../../query/use-persisted-query-data';
 import { fetchTasks } from '../api/tasks';
 import {
   buildOptimisticTask,
@@ -63,13 +64,12 @@ export function useTasks() {
     initialDataUpdatedAt: cachedTasks ? new Date(cachedTasks.updatedAt).getTime() : undefined,
     queryFn: fetchTasks,
     queryKey: userId ? taskQueryKeys.list(userId) : taskQueryKeys.all,
+    refetchInterval: userId ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    select: (tasks) => (userId ? applyQueuedTaskActions(tasks, userId) : tasks),
   });
 
-  useEffect(() => {
-    if (userId && query.data) {
-      saveTaskListCache(userId, query.data);
-    }
-  }, [query.data, userId]);
+  usePersistedQueryData(userId ?? null, query.data, saveTaskListCache);
 
   return {
     ...query,
@@ -87,6 +87,7 @@ export function useCreateTask() {
     CreateTaskMutationVariables,
     CreateTaskMutationContext
   >({
+    mutationKey: ['tasks', 'create'],
     mutationFn: ({ clientTaskId, payload, userId }) =>
       enqueueAndSyncAction<Task>(
         createOfflineAction({
@@ -165,6 +166,7 @@ export function useUpdateTask() {
   const queryClient = useQueryClient();
 
   return useMutation<QueueSubmissionResult<Task>, Error, UpdateTaskInput, UpdateTaskMutationContext>({
+    mutationKey: ['tasks', 'update'],
     mutationFn: ({ taskId, values }) =>
       enqueueAndSyncAction<Task>(
         createOfflineAction({
@@ -244,6 +246,7 @@ export function useDeleteTask() {
     DeleteTaskInput,
     RestoreDeletedTaskContext | null
   >({
+    mutationKey: ['tasks', 'delete'],
     mutationFn: ({ taskId }) =>
       enqueueAndSyncAction(
         createOfflineAction({

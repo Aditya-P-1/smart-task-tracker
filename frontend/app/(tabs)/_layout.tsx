@@ -1,9 +1,19 @@
 import { Redirect, Tabs } from 'expo-router';
+import { useEffect } from 'react';
 
-import { hasActiveSession } from '../../src/features/auth/storage/auth-session';
+import { getStoredAuthUser, hasActiveSession } from '../../src/features/auth/storage/auth-session';
+import { prefetchAuthenticatedData } from '../../src/query/prefetch-authenticated-data';
 
 export default function TabsLayout() {
-  if (!hasActiveSession()) {
+  const hasSession = hasActiveSession();
+
+  useEffect(() => {
+    if (hasSession && getStoredAuthUser()?.id) {
+      void prefetchAuthenticatedData();
+    }
+  }, [hasSession]);
+
+  if (!hasSession) {
     return <Redirect href="/auth/login" />;
   }
 

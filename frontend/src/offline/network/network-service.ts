@@ -7,6 +7,8 @@ type NetworkSnapshot = {
 };
 
 const listeners = new Set<(snapshot: NetworkSnapshot) => void>();
+let netInfoSubscription: (() => void) | null = null;
+let activeListenerCount = 0;
 
 let networkSnapshot: NetworkSnapshot = {
   isConnected: false,
@@ -56,7 +58,20 @@ export async function refreshNetworkSnapshot() {
 }
 
 export function startNetworkStatusListener() {
-  return NetInfo.addEventListener((state) => {
-    updateNetworkSnapshot(mapStateToSnapshot(state));
-  });
+  activeListenerCount += 1;
+
+  if (!netInfoSubscription) {
+    netInfoSubscription = NetInfo.addEventListener((state) => {
+      updateNetworkSnapshot(mapStateToSnapshot(state));
+    });
+  }
+
+  return () => {
+    activeListenerCount = Math.max(activeListenerCount - 1, 0);
+
+    if (activeListenerCount === 0 && netInfoSubscription) {
+      netInfoSubscription();
+      netInfoSubscription = null;
+    }
+  };
 }
