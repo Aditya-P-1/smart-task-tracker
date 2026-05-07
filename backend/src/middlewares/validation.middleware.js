@@ -13,6 +13,14 @@ function validateRequest(validator) {
       req.body = result.sanitizedBody;
     }
 
+    if (result.sanitizedParams) {
+      req.params = result.sanitizedParams;
+    }
+
+    if (result.sanitizedQuery) {
+      req.query = result.sanitizedQuery;
+    }
+
     next();
   };
 }
