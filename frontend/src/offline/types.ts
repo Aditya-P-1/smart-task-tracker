@@ -85,6 +85,7 @@ export type ProcessQueueActionResult<TEntity = unknown> =
     }
   | {
       status: 'retry';
+      errorMessage?: string;
     }
   | {
       status: 'synced';

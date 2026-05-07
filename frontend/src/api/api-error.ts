@@ -41,6 +41,17 @@ function readErrorDetails(responseData: ErrorResponse | undefined) {
 
 export function normalizeApiError(error: unknown): NormalizedApiError {
   if (axios.isAxiosError(error)) {
+    const timeoutCode = error.code === 'ECONNABORTED';
+
+    if (timeoutCode) {
+      return {
+        details: [],
+        isNetworkError: true,
+        message: 'The request timed out before the server responded. Please try again.',
+        statusCode: null,
+      };
+    }
+
     if (!error.response) {
       return {
         details: [],

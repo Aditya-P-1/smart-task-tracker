@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import { normalizeApiError } from '../../api/api-error';
 import { appQueryClient } from '../../providers/query-provider';
 import { getStoredAuthUser } from '../../features/auth/storage/auth-session';
 import { createHabit, deleteHabit, checkInHabit } from '../../features/habits/api/habits';
@@ -41,6 +42,8 @@ import type {
 
 let isSyncInProgress = false;
 let scheduledSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+const FALLBACK_QUEUE_RECOVERY_DELAY_MS = 15_000;
+const MONGO_OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 
 type PendingInvalidations = {
   habits: boolean;
@@ -72,16 +75,27 @@ function buildRetryDelayMs(attemptCount: number) {
 }
 
 function shouldRetryError(error: unknown) {
+  const normalizedError = normalizeApiError(error);
+
+  if (normalizedError.isNetworkError) {
+    return true;
+  }
+
   if (axios.isAxiosError(error)) {
-    if (!error.response) {
-      return true;
+    const statusCode = error.response?.status;
+
+    if (typeof statusCode !== 'number') {
+      return false;
     }
 
-    const statusCode = error.response.status;
     return statusCode === 429 || statusCode >= 500;
   }
 
   return false;
+}
+
+function isValidServerEntityId(entityId: string) {
+  return MONGO_OBJECT_ID_PATTERN.test(entityId);
 }
 
 function removeActionById(actions: OfflineAction[], actionId: string) {
@@ -250,6 +264,25 @@ async function syncAction(
 ): Promise<ProcessQueueActionResult> {
   const resolvedEntityId = getResolvedEntityId(state, action.targetId);
 
+  if (
+    action.type !== 'CREATE_TASK' &&
+    action.type !== 'CREATE_HABIT' &&
+    !isValidServerEntityId(resolvedEntityId)
+  ) {
+    if (shouldInvalidateTasks(action)) {
+      removeTaskFromCache(action.userId, action.targetId, resolvedEntityId);
+    }
+
+    if (shouldInvalidateHabits(action)) {
+      removeHabitFromCache(action.userId, action.targetId, resolvedEntityId);
+    }
+
+    return {
+      status: 'discarded',
+      error: new Error('Queued action referenced an invalid server identifier and was discarded.'),
+    };
+  }
+
   switch (action.type) {
     case 'CREATE_TASK': {
       const serverTask = await createTask(action.payload);
@@ -368,6 +401,7 @@ async function processQueuedAction(
   } catch (error) {
     if (shouldRetryError(error)) {
       return {
+        errorMessage: normalizeApiError(error).message,
         status: 'retry',
       };
     }
@@ -419,6 +453,10 @@ async function flushPendingInvalidations(userId: string, pendingInvalidations: P
     pendingInvalidations.tasks ? invalidateTaskListQuery(appQueryClient, userId) : Promise.resolve(),
     pendingInvalidations.habits ? invalidateHabitListQuery(appQueryClient, userId) : Promise.resolve(),
   ]);
+}
+
+function scheduleFailureRecoveryRetry() {
+  scheduleOfflineSync(FALLBACK_QUEUE_RECOVERY_DELAY_MS);
 }
 
 export async function processOfflineQueue() {
@@ -497,12 +535,17 @@ export async function processOfflineQueue() {
       }
 
       if (actionResult.status === 'retry') {
+        const retryErrorMessage =
+          typeof actionResult.errorMessage === 'string'
+            ? actionResult.errorMessage
+            : 'Retry scheduled after a failed sync attempt.';
+
         nextActions = nextActions.map((queuedAction) =>
           queuedAction.id === action.id
             ? {
                 ...queuedAction,
                 attemptCount: queuedAction.attemptCount + 1,
-                lastErrorMessage: 'Retry scheduled after a failed sync attempt.',
+                lastErrorMessage: retryErrorMessage,
                 nextRetryAt: new Date(
                   Date.now() + buildRetryDelayMs(queuedAction.attemptCount + 1),
                 ).toISOString(),
@@ -522,7 +565,7 @@ export async function processOfflineQueue() {
                 ? {
                     ...queuedAction,
                     attemptCount: queuedAction.attemptCount + 1,
-                    lastErrorMessage: 'Retry scheduled after a failed sync attempt.',
+                    lastErrorMessage: retryErrorMessage,
                     nextRetryAt: new Date(
                       Date.now() + buildRetryDelayMs(queuedAction.attemptCount + 1),
                     ).toISOString(),
@@ -553,6 +596,10 @@ export async function processOfflineQueue() {
 
     await flushPendingInvalidations(currentUser.id, pendingInvalidations);
 
+    return results;
+  } catch (error) {
+    scheduleFailureRecoveryRetry();
+    console.warn('Offline queue sync encountered an unexpected failure and will retry automatically.', error);
     return results;
   } finally {
     isSyncInProgress = false;
