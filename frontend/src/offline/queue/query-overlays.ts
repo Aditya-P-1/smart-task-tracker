@@ -55,9 +55,19 @@ function createHabitFromQueuedCreate(
 }
 
 export function applyQueuedTaskActions(tasks: TaskListItem[], userId: string) {
-  return getQueuedActions()
-    .filter((action) => action.userId === userId)
-    .reduce<TaskListItem[]>((currentTasks, action) => {
+  const queuedTaskActions = getQueuedActions().filter(
+    (action) =>
+      action.userId === userId &&
+      (action.type === 'CREATE_TASK' ||
+        action.type === 'UPDATE_TASK' ||
+        action.type === 'DELETE_TASK'),
+  );
+
+  if (queuedTaskActions.length === 0) {
+    return tasks;
+  }
+
+  return queuedTaskActions.reduce<TaskListItem[]>((currentTasks, action) => {
       switch (action.type) {
         case 'CREATE_TASK':
           return upsertTask(
@@ -83,7 +93,7 @@ export function applyQueuedTaskActions(tasks: TaskListItem[], userId: string) {
         default:
           return currentTasks;
       }
-    }, [...tasks]);
+    }, tasks);
 }
 
 function replaceHabit(habits: HabitListItem[], habitId: string, nextHabit: HabitListItem) {
@@ -101,9 +111,19 @@ function upsertHabit(habits: HabitListItem[], nextHabit: HabitListItem) {
 }
 
 export function applyQueuedHabitActions(habits: HabitListItem[], userId: string) {
-  return getQueuedActions()
-    .filter((action) => action.userId === userId)
-    .reduce<HabitListItem[]>((currentHabits, action) => {
+  const queuedHabitActions = getQueuedActions().filter(
+    (action) =>
+      action.userId === userId &&
+      (action.type === 'CREATE_HABIT' ||
+        action.type === 'CHECKIN_HABIT' ||
+        action.type === 'DELETE_HABIT'),
+  );
+
+  if (queuedHabitActions.length === 0) {
+    return habits;
+  }
+
+  return queuedHabitActions.reduce<HabitListItem[]>((currentHabits, action) => {
       switch (action.type) {
         case 'CREATE_HABIT':
           return upsertHabit(
@@ -131,5 +151,5 @@ export function applyQueuedHabitActions(habits: HabitListItem[], userId: string)
         default:
           return currentHabits;
       }
-    }, habits.map((habit) => decorateHabit(habit)));
+    }, habits);
 }

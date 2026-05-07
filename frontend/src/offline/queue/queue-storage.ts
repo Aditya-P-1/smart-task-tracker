@@ -25,6 +25,10 @@ function isValidDateString(value: unknown) {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
 }
 
+function isValidAttemptCount(value: unknown) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 function isValidOfflineAction(value: unknown): value is OfflineAction {
   if (!isRecord(value)) {
     return false;
@@ -35,8 +39,9 @@ function isValidOfflineAction(value: unknown): value is OfflineAction {
     !isValidDateString(value.createdAt) ||
     !hasStringPayload(value.targetId) ||
     !hasStringPayload(value.userId) ||
-    typeof value.attemptCount !== 'number' ||
-    (typeof value.nextRetryAt !== 'undefined' && !isValidDateString(value.nextRetryAt))
+    !isValidAttemptCount(value.attemptCount) ||
+    (typeof value.nextRetryAt !== 'undefined' && !isValidDateString(value.nextRetryAt)) ||
+    (typeof value.lastErrorMessage !== 'undefined' && typeof value.lastErrorMessage !== 'string')
   ) {
     return false;
   }
@@ -145,16 +150,13 @@ export function getOfflineQueueState() {
 }
 
 export function saveOfflineQueueState(state: OfflineQueueState) {
-  const sanitizedState = sanitizeQueueState(state);
+  const sanitizedState = sanitizeQueueState({
+    ...state,
+    updatedAt: new Date().toISOString(),
+  });
   setCachedQueueState(sanitizedState);
 
-  storageService.set(
-    STORAGE_KEYS.offlineQueueState,
-    JSON.stringify({
-      ...sanitizedState,
-      updatedAt: new Date().toISOString(),
-    }),
-  );
+  storageService.set(STORAGE_KEYS.offlineQueueState, JSON.stringify(sanitizedState));
 }
 
 export function updateOfflineQueueState(

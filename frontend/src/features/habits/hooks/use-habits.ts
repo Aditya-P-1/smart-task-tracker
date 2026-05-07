@@ -14,7 +14,11 @@ import {
   setCachedHabitQueryData,
   upsertHabit,
 } from '../query-cache';
-import { getCachedHabitList, saveHabitListCache } from '../storage/habit-cache';
+import {
+  createHabitCacheSnapshot,
+  getCachedHabitList,
+  saveHabitListCache,
+} from '../storage/habit-cache';
 import type {
   CheckInHabitInput,
   CreateHabitPayload,
@@ -71,12 +75,17 @@ export function useHabits() {
     refetchInterval: userId ? 60_000 : false,
     refetchIntervalInBackground: false,
     select: (habits) => {
-      const offlineAwareHabits = userId ? applyQueuedHabitActions(habits, userId) : habits;
-      return sortHabits(offlineAwareHabits.map((habit) => decorateHabit(habit)));
+      const decoratedHabits = habits.map((habit) => decorateHabit(habit));
+      const offlineAwareHabits = userId
+        ? applyQueuedHabitActions(decoratedHabits, userId)
+        : decoratedHabits;
+      return sortHabits(offlineAwareHabits);
     },
   });
 
-  usePersistedQueryData(userId ?? null, query.data, saveHabitListCache);
+  usePersistedQueryData(userId ?? null, query.data, saveHabitListCache, (habits) =>
+    createHabitCacheSnapshot(userId ?? '', habits),
+  );
 
   return {
     ...query,

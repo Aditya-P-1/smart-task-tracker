@@ -17,7 +17,11 @@ import {
   taskQueryKeys,
   upsertTask,
 } from '../query-cache';
-import { getCachedTaskList, saveTaskListCache } from '../storage/task-cache';
+import {
+  createTaskCacheSnapshot,
+  getCachedTaskList,
+  saveTaskListCache,
+} from '../storage/task-cache';
 import type {
   CreateTaskPayload,
   DeleteTaskInput,
@@ -69,7 +73,9 @@ export function useTasks() {
     select: (tasks) => (userId ? applyQueuedTaskActions(tasks, userId) : tasks),
   });
 
-  usePersistedQueryData(userId ?? null, query.data, saveTaskListCache);
+  usePersistedQueryData(userId ?? null, query.data, saveTaskListCache, (tasks) =>
+    createTaskCacheSnapshot(userId ?? '', tasks),
+  );
 
   return {
     ...query,

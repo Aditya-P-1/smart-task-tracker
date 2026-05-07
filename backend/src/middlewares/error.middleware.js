@@ -4,7 +4,7 @@ const { env } = require('../config/env');
 const { AppError } = require('../utils/app-error');
 
 function notFoundHandler(req, _res, next) {
-  next(new AppError(`Route not found: ${req.originalUrl}`, 404));
+  next(new AppError(`Route not found: ${req.originalUrl}`, 404, undefined, 'ROUTE_NOT_FOUND'));
 }
 
 function escapeHeaderValue(value) {
@@ -49,7 +49,7 @@ function errorHandler(error, _req, res, _next) {
   }
 
   res.status(statusCode).json({
-    code: normalizedError.code,
+    code: normalizedError.code || (statusCode >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_FAILED'),
     details: normalizedError.details,
     message: normalizedError.message || 'Internal server error',
     stack: env.nodeEnv === 'development' ? normalizedError.stack : undefined,
