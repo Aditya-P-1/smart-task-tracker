@@ -1,21 +1,22 @@
-import { PropsWithChildren, useEffect, useState } from 'react';
+import { PropsWithChildren, useEffect } from 'react';
 import { AppState } from 'react-native';
 import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 
-export function QueryProvider({ children }: PropsWithChildren) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            refetchOnReconnect: true,
-            retry: 1,
-            staleTime: 30_000,
-          },
-        },
-      }),
-  );
+export const appQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnReconnect: true,
+      retry: 1,
+      staleTime: 30_000,
+    },
+  },
+});
 
+export function resetAppQueryCache() {
+  appQueryClient.clear();
+}
+
+export function QueryProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     focusManager.setFocused(AppState.currentState === 'active');
 
@@ -28,5 +29,5 @@ export function QueryProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>;
 }

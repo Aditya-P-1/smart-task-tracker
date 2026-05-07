@@ -2,9 +2,8 @@ import axios, { AxiosHeaders } from 'axios';
 
 import { env } from '../config/env';
 import { STORAGE_KEYS } from '../constants/storage-keys';
+import { resetAppQueryCache } from '../providers/query-provider';
 import { storage } from '../storage/mmkv';
-
-const ACCESS_TOKEN_KEY = 'accessToken';
 
 export const apiClient = axios.create({
   baseURL: env.apiUrl,
@@ -15,7 +14,7 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
-  const token = storage.getString(ACCESS_TOKEN_KEY);
+  const token = storage.getString(STORAGE_KEYS.accessToken);
   const headers = AxiosHeaders.from(config.headers);
 
   if (token) {
@@ -35,6 +34,8 @@ apiClient.interceptors.response.use(
     if (error?.response?.status === 401) {
       storage.remove(STORAGE_KEYS.accessToken);
       storage.remove(STORAGE_KEYS.authUser);
+      storage.remove(STORAGE_KEYS.taskListCache);
+      resetAppQueryCache();
     }
 
     return Promise.reject(error);

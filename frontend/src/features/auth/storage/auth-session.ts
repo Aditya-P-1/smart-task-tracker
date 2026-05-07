@@ -1,4 +1,5 @@
 import { STORAGE_KEYS } from '../../../constants/storage-keys';
+import { resetAppQueryCache } from '../../../providers/query-provider';
 import { storageService } from '../../../storage/mmkv';
 
 import type { AuthUser, LoginResult } from '../types/auth';
@@ -27,6 +28,7 @@ export function getStoredAuthUser() {
 }
 
 export function saveAuthSession(session: LoginResult) {
+  storageService.remove(STORAGE_KEYS.taskListCache);
   storageService.set(STORAGE_KEYS.accessToken, session.token);
   storageService.set(STORAGE_KEYS.authUser, JSON.stringify(session.user));
 }
@@ -34,4 +36,6 @@ export function saveAuthSession(session: LoginResult) {
 export function clearAuthSession() {
   storageService.remove(STORAGE_KEYS.accessToken);
   storageService.remove(STORAGE_KEYS.authUser);
+  storageService.remove(STORAGE_KEYS.taskListCache);
+  resetAppQueryCache();
 }
