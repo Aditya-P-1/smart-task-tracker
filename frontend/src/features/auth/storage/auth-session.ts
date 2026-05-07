@@ -28,6 +28,7 @@ export function getStoredAuthUser() {
 }
 
 export function saveAuthSession(session: LoginResult) {
+  storageService.remove(STORAGE_KEYS.habitListCache);
   storageService.remove(STORAGE_KEYS.taskListCache);
   storageService.set(STORAGE_KEYS.accessToken, session.token);
   storageService.set(STORAGE_KEYS.authUser, JSON.stringify(session.user));
@@ -36,6 +37,7 @@ export function saveAuthSession(session: LoginResult) {
 export function clearAuthSession() {
   storageService.remove(STORAGE_KEYS.accessToken);
   storageService.remove(STORAGE_KEYS.authUser);
+  storageService.remove(STORAGE_KEYS.habitListCache);
   storageService.remove(STORAGE_KEYS.taskListCache);
   resetAppQueryCache();
 }

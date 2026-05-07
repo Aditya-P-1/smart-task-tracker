@@ -34,6 +34,7 @@ apiClient.interceptors.response.use(
     if (error?.response?.status === 401) {
       storage.remove(STORAGE_KEYS.accessToken);
       storage.remove(STORAGE_KEYS.authUser);
+      storage.remove(STORAGE_KEYS.habitListCache);
       storage.remove(STORAGE_KEYS.taskListCache);
       resetAppQueryCache();
     }
