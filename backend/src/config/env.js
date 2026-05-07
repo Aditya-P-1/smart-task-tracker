@@ -30,7 +30,16 @@ function isValidMongoUri(value) {
 
 const port = parsePositiveInteger('PORT', process.env.PORT, 5000);
 
+function trimTrailingSlash(value) {
+  return value.replace(/\/+$/, '');
+}
+
+function normalizeAppUrl(value) {
+  return value.endsWith('://') ? value : trimTrailingSlash(value);
+}
+
 const env = Object.freeze({
+  appUrl: normalizeAppUrl(process.env.APP_URL || 'smarttaskhabittracker://'),
   clientUrls: parseClientUrls(process.env.CLIENT_URL),
   emailVerificationTokenExpiresMinutes: parsePositiveInteger(
     'EMAIL_VERIFICATION_TOKEN_EXPIRES_MINUTES',
@@ -43,7 +52,7 @@ const env = Object.freeze({
     process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smart-task-habit-tracker',
   nodeEnv: process.env.NODE_ENV || 'development',
   port,
-  serverUrl: process.env.SERVER_URL || `http://localhost:${port}`,
+  serverUrl: trimTrailingSlash(process.env.SERVER_URL || `http://localhost:${port}`),
   smtp: {
     from: process.env.SMTP_FROM || 'no-reply@example.com',
     host: process.env.SMTP_HOST || 'smtp.example.com',

@@ -8,6 +8,17 @@ function trimTrailingSlash(url: string) {
   return url.replace(/\/+$/, '');
 }
 
+export function normalizeLocalhostUrlForPlatform(url: string) {
+  if (Platform.OS !== 'android') {
+    return url;
+  }
+
+  return url.replace('http://localhost', 'http://10.0.2.2').replace(
+    'http://127.0.0.1',
+    'http://10.0.2.2',
+  );
+}
+
 function getExpoHostApiUrl() {
   const hostUri = Constants.expoConfig?.hostUri;
 
@@ -28,14 +39,16 @@ function resolveApiUrl() {
   const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 
   if (configuredApiUrl) {
-    return trimTrailingSlash(configuredApiUrl);
+    return trimTrailingSlash(normalizeLocalhostUrlForPlatform(configuredApiUrl));
   }
 
   if (Platform.OS === 'web') {
     return DEFAULT_WEB_API_URL;
   }
 
-  return trimTrailingSlash(getExpoHostApiUrl() ?? DEFAULT_WEB_API_URL);
+  return trimTrailingSlash(
+    normalizeLocalhostUrlForPlatform(getExpoHostApiUrl() ?? DEFAULT_WEB_API_URL),
+  );
 }
 
 export const env = Object.freeze({

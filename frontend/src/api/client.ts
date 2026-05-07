@@ -1,6 +1,7 @@
 import axios, { AxiosHeaders } from 'axios';
 
 import { env } from '../config/env';
+import { STORAGE_KEYS } from '../constants/storage-keys';
 import { storage } from '../storage/mmkv';
 
 const ACCESS_TOKEN_KEY = 'accessToken';
@@ -27,3 +28,15 @@ apiClient.interceptors.request.use((config) => {
 
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      storage.remove(STORAGE_KEYS.accessToken);
+      storage.remove(STORAGE_KEYS.authUser);
+    }
+
+    return Promise.reject(error);
+  },
+);

@@ -38,7 +38,13 @@ function createMailTransporter() {
 }
 
 function getVerificationUrl(token) {
-  return `${env.serverUrl}/api/v1/auth/verify-email/${token}`;
+  const path = `auth/verify-email/${token}`;
+
+  if (env.appUrl.endsWith('://')) {
+    return `${env.appUrl}${path}`;
+  }
+
+  return `${env.appUrl}/${path}`;
 }
 
 async function sendMail({ html, subject, text, to }) {
