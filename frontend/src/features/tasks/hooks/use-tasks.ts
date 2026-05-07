@@ -1,8 +1,21 @@
 import { useEffect } from 'react';
-import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getStoredAuthUser } from '../../auth/storage/auth-session';
-import { createTask, deleteTask, fetchTasks, updateTask } from '../api/tasks';
+import { createOfflineAction } from '../../../offline/queue/action-queue';
+import { enqueueAndSyncAction } from '../../../offline/sync/offline-sync-service';
+import type { QueueSubmissionResult } from '../../../offline/types';
+import { fetchTasks } from '../api/tasks';
+import {
+  buildOptimisticTask,
+  buildOptimisticTaskUpdate,
+  createOptimisticTaskId,
+  removeTask,
+  replaceTask,
+  setCachedTaskQueryData,
+  taskQueryKeys,
+  upsertTask,
+} from '../query-cache';
 import { getCachedTaskList, saveTaskListCache } from '../storage/task-cache';
 import type {
   CreateTaskPayload,
@@ -11,7 +24,6 @@ import type {
   Task,
   TaskListItem,
   UpdateTaskInput,
-  UpdateTaskPayload,
 } from '../types/task';
 
 type UpdateTaskMutationContext = {
@@ -24,91 +36,11 @@ type CreateTaskMutationContext = {
   userId: string;
 };
 
-export const taskQueryKeys = {
-  all: ['tasks'] as const,
-  list: (userId: string) => ['tasks', userId] as const,
+type CreateTaskMutationVariables = {
+  clientTaskId: string;
+  payload: CreateTaskPayload;
+  userId: string;
 };
-
-function compareTasks(left: TaskListItem, right: TaskListItem) {
-  if (left.completed !== right.completed) {
-    return left.completed ? 1 : -1;
-  }
-
-  if (left.dueDate && right.dueDate) {
-    const dueDateDifference = new Date(left.dueDate).getTime() - new Date(right.dueDate).getTime();
-
-    if (dueDateDifference !== 0) {
-      return dueDateDifference;
-    }
-  } else if (left.dueDate) {
-    return -1;
-  } else if (right.dueDate) {
-    return 1;
-  }
-
-  return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-}
-
-function sortTasks(tasks: TaskListItem[]) {
-  return [...tasks].sort(compareTasks);
-}
-
-function setCachedTaskQueryData(
-  queryClient: QueryClient,
-  userId: string,
-  tasks: TaskListItem[],
-) {
-  const sortedTasks = sortTasks(tasks);
-
-  queryClient.setQueryData(taskQueryKeys.list(userId), sortedTasks);
-  saveTaskListCache(userId, sortedTasks);
-}
-
-function replaceTask(tasks: TaskListItem[], taskId: string, nextTask: TaskListItem) {
-  return tasks.map((task) => (task.id === taskId ? nextTask : task));
-}
-
-function removeTask(tasks: TaskListItem[], taskId: string) {
-  return tasks.filter((task) => task.id !== taskId);
-}
-
-function upsertTask(tasks: TaskListItem[], nextTask: TaskListItem) {
-  const hasTask = tasks.some((task) => task.id === nextTask.id);
-
-  return hasTask ? replaceTask(tasks, nextTask.id, nextTask) : [...tasks, nextTask];
-}
-
-function createOptimisticTaskId() {
-  return `temp:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function buildOptimisticTask(payload: CreateTaskPayload, userId: string): TaskListItem {
-  const timestamp = new Date().toISOString();
-
-  return {
-    completed: payload.completed ?? false,
-    createdAt: timestamp,
-    description: payload.description ?? '',
-    dueDate: payload.dueDate ?? null,
-    id: createOptimisticTaskId(),
-    isPending: true,
-    title: payload.title,
-    updatedAt: timestamp,
-    userId,
-  };
-}
-
-function buildOptimisticTaskUpdate(task: TaskListItem, values: UpdateTaskPayload): TaskListItem {
-  return {
-    ...task,
-    completed: values.completed ?? task.completed,
-    description: values.description ?? task.description,
-    dueDate: typeof values.dueDate === 'undefined' ? task.dueDate : values.dueDate,
-    isPending: true,
-    title: values.title ?? task.title,
-    updatedAt: new Date().toISOString(),
-  };
-}
 
 function resolveActiveUserId() {
   const currentUser = getStoredAuthUser();
@@ -149,27 +81,40 @@ export function useTasks() {
 export function useCreateTask() {
   const queryClient = useQueryClient();
 
-  return useMutation<Task, Error, CreateTaskPayload, CreateTaskMutationContext>({
-    mutationFn: createTask,
-    onError: (_error, _payload, context) => {
-      if (context) {
-        const currentTasks =
-          queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
-
-        setCachedTaskQueryData(
-          queryClient,
-          context.userId,
-          removeTask(currentTasks, context.optimisticTaskId),
-        );
+  const mutation = useMutation<
+    QueueSubmissionResult<Task>,
+    Error,
+    CreateTaskMutationVariables,
+    CreateTaskMutationContext
+  >({
+    mutationFn: ({ clientTaskId, payload, userId }) =>
+      enqueueAndSyncAction<Task>(
+        createOfflineAction({
+          payload,
+          targetId: clientTaskId,
+          type: 'CREATE_TASK',
+          userId,
+        }),
+      ),
+    onError: (_error, _variables, context) => {
+      if (!context) {
+        return;
       }
-    },
-    onMutate: async (payload) => {
-      const userId = resolveActiveUserId();
 
+      const currentTasks =
+        queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
+
+      setCachedTaskQueryData(
+        queryClient,
+        context.userId,
+        removeTask(currentTasks, context.optimisticTaskId),
+      );
+    },
+    onMutate: async ({ clientTaskId, payload, userId }) => {
       await queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
 
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
-      const optimisticTask = buildOptimisticTask(payload, userId);
+      const optimisticTask = buildOptimisticTask(payload, userId, clientTaskId);
 
       setCachedTaskQueryData(queryClient, userId, [optimisticTask, ...previousTasks]);
 
@@ -178,13 +123,59 @@ export function useCreateTask() {
         userId,
       };
     },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: taskQueryKeys.list(context.userId) });
+    onSuccess: (result, _variables, context) => {
+      if (!context || result.status !== 'synced' || !result.syncedEntity) {
+        return;
       }
+
+      const syncedTask = result.syncedEntity;
+
+      const currentTasks =
+        queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
+
+      setCachedTaskQueryData(
+        queryClient,
+        context.userId,
+        currentTasks.map((task) =>
+          task.id === context.optimisticTaskId ? syncedTask : task,
+        ),
+      );
     },
-    onSuccess: (createdTask, _payload, context) => {
-      if (!context) {
+  });
+
+  function buildVariables(payload: CreateTaskPayload): CreateTaskMutationVariables {
+    return {
+      clientTaskId: createOptimisticTaskId(),
+      payload,
+      userId: resolveActiveUserId(),
+    };
+  }
+
+  return {
+    ...mutation,
+    mutate: (payload: CreateTaskPayload) => {
+      mutation.mutate(buildVariables(payload));
+    },
+    mutateAsync: (payload: CreateTaskPayload) => mutation.mutateAsync(buildVariables(payload)),
+    variables: mutation.variables?.payload,
+  };
+}
+
+export function useUpdateTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation<QueueSubmissionResult<Task>, Error, UpdateTaskInput, UpdateTaskMutationContext>({
+    mutationFn: ({ taskId, values }) =>
+      enqueueAndSyncAction<Task>(
+        createOfflineAction({
+          payload: values,
+          targetId: taskId,
+          type: 'UPDATE_TASK',
+          userId: resolveActiveUserId(),
+        }),
+      ),
+    onError: (_error, _payload, context) => {
+      if (!context?.previousTask) {
         return;
       }
 
@@ -194,28 +185,8 @@ export function useCreateTask() {
       setCachedTaskQueryData(
         queryClient,
         context.userId,
-        currentTasks.map((task) => (task.id === context.optimisticTaskId ? createdTask : task)),
+        upsertTask(currentTasks, context.previousTask),
       );
-    },
-  });
-}
-
-export function useUpdateTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation<Task, Error, UpdateTaskInput, UpdateTaskMutationContext>({
-    mutationFn: ({ taskId, values }) => updateTask(taskId, values),
-    onError: (_error, _payload, context) => {
-      if (context?.previousTask) {
-        const currentTasks =
-          queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
-
-        setCachedTaskQueryData(
-          queryClient,
-          context.userId,
-          upsertTask(currentTasks, context.previousTask),
-        );
-      }
     },
     onMutate: async ({ taskId, values }) => {
       const userId = resolveActiveUserId();
@@ -224,23 +195,64 @@ export function useUpdateTask() {
 
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
       const previousTask = previousTasks.find((task) => task.id === taskId) ?? null;
-      const optimisticTasks = previousTasks.map((task) =>
-        task.id === taskId ? buildOptimisticTaskUpdate(task, values) : task,
-      );
 
-      setCachedTaskQueryData(queryClient, userId, optimisticTasks);
+      if (!previousTask) {
+        return {
+          previousTask: null,
+          userId,
+        };
+      }
+
+      setCachedTaskQueryData(
+        queryClient,
+        userId,
+        previousTasks.map((task) =>
+          task.id === taskId ? buildOptimisticTaskUpdate(task, values) : task,
+        ),
+      );
 
       return {
         previousTask,
         userId,
       };
     },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: taskQueryKeys.list(context.userId) });
+    onSuccess: (result, variables, context) => {
+      if (!context || result.status !== 'synced' || !result.syncedEntity) {
+        return;
       }
+
+      const syncedTask = result.syncedEntity;
+
+      const currentTasks =
+        queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
+
+      setCachedTaskQueryData(
+        queryClient,
+        context.userId,
+        replaceTask(currentTasks, variables.taskId, syncedTask),
+      );
     },
-    onSuccess: (updatedTask, variables, context) => {
+  });
+}
+
+export function useDeleteTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    QueueSubmissionResult<never>,
+    Error,
+    DeleteTaskInput,
+    RestoreDeletedTaskContext | null
+  >({
+    mutationFn: ({ taskId }) =>
+      enqueueAndSyncAction(
+        createOfflineAction({
+          targetId: taskId,
+          type: 'DELETE_TASK',
+          userId: resolveActiveUserId(),
+        }),
+      ),
+    onError: (_error, _payload, context) => {
       if (!context) {
         return;
       }
@@ -251,28 +263,8 @@ export function useUpdateTask() {
       setCachedTaskQueryData(
         queryClient,
         context.userId,
-        replaceTask(currentTasks, variables.taskId, updatedTask),
+        upsertTask(currentTasks, context.deletedTask),
       );
-    },
-  });
-}
-
-export function useDeleteTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation<Task, Error, DeleteTaskInput, RestoreDeletedTaskContext | null>({
-    mutationFn: ({ taskId }) => deleteTask(taskId),
-    onError: (_error, _payload, context) => {
-      if (context) {
-        const currentTasks =
-          queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(context.userId)) ?? [];
-
-        setCachedTaskQueryData(
-          queryClient,
-          context.userId,
-          upsertTask(currentTasks, context.deletedTask),
-        );
-      }
     },
     onMutate: async ({ taskId }) => {
       const userId = resolveActiveUserId();
@@ -282,11 +274,7 @@ export function useDeleteTask() {
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
       const deletedTask = previousTasks.find((task) => task.id === taskId);
 
-      setCachedTaskQueryData(
-        queryClient,
-        userId,
-        removeTask(previousTasks, taskId),
-      );
+      setCachedTaskQueryData(queryClient, userId, removeTask(previousTasks, taskId));
 
       if (!deletedTask) {
         return null;
@@ -296,11 +284,6 @@ export function useDeleteTask() {
         deletedTask,
         userId,
       };
-    },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: taskQueryKeys.list(context.userId) });
-      }
     },
   });
 }

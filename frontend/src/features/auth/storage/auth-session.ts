@@ -1,6 +1,7 @@
 import { STORAGE_KEYS } from '../../../constants/storage-keys';
 import { resetAppQueryCache } from '../../../providers/query-provider';
 import { storageService } from '../../../storage/mmkv';
+import { clearOfflineQueueState } from '../../../offline/queue/queue-storage';
 
 import type { AuthUser, LoginResult } from '../types/auth';
 
@@ -28,8 +29,16 @@ export function getStoredAuthUser() {
 }
 
 export function saveAuthSession(session: LoginResult) {
-  storageService.remove(STORAGE_KEYS.habitListCache);
-  storageService.remove(STORAGE_KEYS.taskListCache);
+  const existingUser = getStoredAuthUser();
+  const isSameUserSession = existingUser?.id === session.user.id;
+
+  if (!isSameUserSession) {
+    storageService.remove(STORAGE_KEYS.habitListCache);
+    storageService.remove(STORAGE_KEYS.taskListCache);
+    clearOfflineQueueState();
+    resetAppQueryCache();
+  }
+
   storageService.set(STORAGE_KEYS.accessToken, session.token);
   storageService.set(STORAGE_KEYS.authUser, JSON.stringify(session.user));
 }
@@ -39,5 +48,6 @@ export function clearAuthSession() {
   storageService.remove(STORAGE_KEYS.authUser);
   storageService.remove(STORAGE_KEYS.habitListCache);
   storageService.remove(STORAGE_KEYS.taskListCache);
+  clearOfflineQueueState();
   resetAppQueryCache();
 }

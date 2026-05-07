@@ -1,8 +1,18 @@
 import { useEffect } from 'react';
-import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getStoredAuthUser } from '../../auth/storage/auth-session';
-import { checkInHabit, createHabit, deleteHabit, fetchHabits } from '../api/habits';
+import { createOfflineAction } from '../../../offline/queue/action-queue';
+import { enqueueAndSyncAction } from '../../../offline/sync/offline-sync-service';
+import type { QueueSubmissionResult } from '../../../offline/types';
+import { fetchHabits } from '../api/habits';
+import {
+  habitQueryKeys,
+  removeHabit,
+  replaceHabit,
+  setCachedHabitQueryData,
+  upsertHabit,
+} from '../query-cache';
 import { getCachedHabitList, saveHabitListCache } from '../storage/habit-cache';
 import type {
   CheckInHabitInput,
@@ -17,6 +27,7 @@ import {
   buildOptimisticHabitCheckIn,
   createOptimisticHabit,
   decorateHabit,
+  getHabitDayKey,
   sortHabits,
 } from '../utils/habit';
 
@@ -25,36 +36,14 @@ type CreateHabitMutationContext = {
   userId: string;
 };
 
-export const habitQueryKeys = {
-  all: ['habits'] as const,
-  list: (userId: string) => ['habits', userId] as const,
+type CreateHabitMutationVariables = {
+  clientHabitId: string;
+  payload: CreateHabitPayload;
+  userId: string;
 };
 
-function setCachedHabitQueryData(
-  queryClient: QueryClient,
-  userId: string,
-  habits: HabitListItem[],
-) {
-  const sortedHabits = sortHabits(habits.map((habit) => decorateHabit(habit)));
-
-  queryClient.setQueryData(habitQueryKeys.list(userId), sortedHabits);
-  saveHabitListCache(userId, sortedHabits);
-}
-
-function replaceHabit(habits: HabitListItem[], habitId: string, nextHabit: HabitListItem) {
-  return habits.map((habit) => (habit.id === habitId ? nextHabit : habit));
-}
-
-function removeHabit(habits: HabitListItem[], habitId: string) {
-  return habits.filter((habit) => habit.id !== habitId);
-}
-
-function upsertHabit(habits: HabitListItem[], nextHabit: HabitListItem) {
-  const hasHabit = habits.some((habit) => habit.id === nextHabit.id);
-
-  return hasHabit
-    ? replaceHabit(habits, nextHabit.id, nextHabit)
-    : [...habits, nextHabit];
+function createOptimisticHabitId() {
+  return `temp:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function resolveActiveUserId() {
@@ -97,9 +86,22 @@ export function useHabits() {
 export function useCreateHabit() {
   const queryClient = useQueryClient();
 
-  return useMutation<Habit, Error, CreateHabitPayload, CreateHabitMutationContext>({
-    mutationFn: createHabit,
-    onError: (_error, _payload, context) => {
+  const mutation = useMutation<
+    QueueSubmissionResult<Habit>,
+    Error,
+    CreateHabitMutationVariables,
+    CreateHabitMutationContext
+  >({
+    mutationFn: ({ clientHabitId, payload, userId }) =>
+      enqueueAndSyncAction<Habit>(
+        createOfflineAction({
+          payload,
+          targetId: clientHabitId,
+          type: 'CREATE_HABIT',
+          userId,
+        }),
+      ),
+    onError: (_error, _variables, context) => {
       if (!context) {
         return;
       }
@@ -113,14 +115,12 @@ export function useCreateHabit() {
         removeHabit(currentHabits, context.optimisticHabitId),
       );
     },
-    onMutate: async (payload) => {
-      const userId = resolveActiveUserId();
-
+    onMutate: async ({ clientHabitId, payload, userId }) => {
       await queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
 
       const previousHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(userId)) ?? [];
-      const optimisticHabit = createOptimisticHabit(payload, userId);
+      const optimisticHabit = createOptimisticHabit(payload, userId, clientHabitId);
 
       setCachedHabitQueryData(queryClient, userId, [optimisticHabit, ...previousHabits]);
 
@@ -129,15 +129,12 @@ export function useCreateHabit() {
         userId,
       };
     },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: habitQueryKeys.list(context.userId) });
-      }
-    },
-    onSuccess: (createdHabit, _payload, context) => {
-      if (!context) {
+    onSuccess: (result, _variables, context) => {
+      if (!context || result.status !== 'synced' || !result.syncedEntity) {
         return;
       }
+
+      const syncedHabit = decorateHabit(result.syncedEntity);
 
       const currentHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(context.userId)) ?? [];
@@ -146,18 +143,55 @@ export function useCreateHabit() {
         queryClient,
         context.userId,
         currentHabits.map((habit) =>
-          habit.id === context.optimisticHabitId ? decorateHabit(createdHabit) : habit,
+          habit.id === context.optimisticHabitId ? syncedHabit : habit,
         ),
       );
     },
   });
+
+  function buildVariables(payload: CreateHabitPayload): CreateHabitMutationVariables {
+    return {
+      clientHabitId: createOptimisticHabitId(),
+      payload,
+      userId: resolveActiveUserId(),
+    };
+  }
+
+  return {
+    ...mutation,
+    mutate: (payload: CreateHabitPayload) => {
+      mutation.mutate(buildVariables(payload));
+    },
+    mutateAsync: (payload: CreateHabitPayload) => mutation.mutateAsync(buildVariables(payload)),
+    variables: mutation.variables?.payload,
+  };
 }
 
 export function useCheckInHabit() {
   const queryClient = useQueryClient();
 
-  return useMutation<Habit, Error, CheckInHabitInput, RestoreHabitContext | null>({
-    mutationFn: ({ habitId }) => checkInHabit(habitId),
+  return useMutation<
+    QueueSubmissionResult<HabitListItem>,
+    Error,
+    CheckInHabitInput,
+    RestoreHabitContext | null
+  >({
+    mutationFn: ({ habitId }) => {
+      const dayKey = getHabitDayKey();
+
+      if (!dayKey) {
+        throw new Error('The current date could not be resolved for this habit check-in.');
+      }
+
+      return enqueueAndSyncAction<HabitListItem>(
+        createOfflineAction({
+          dayKey,
+          targetId: habitId,
+          type: 'CHECKIN_HABIT',
+          userId: resolveActiveUserId(),
+        }),
+      );
+    },
     onError: (_error, _payload, context) => {
       if (!context) {
         return;
@@ -200,23 +234,19 @@ export function useCheckInHabit() {
         userId,
       };
     },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: habitQueryKeys.list(context.userId) });
-      }
-    },
-    onSuccess: (checkedInHabit, variables, context) => {
-      if (!context) {
+    onSuccess: (result, variables, context) => {
+      if (!context || result.status !== 'synced' || !result.syncedEntity) {
         return;
       }
 
       const currentHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(context.userId)) ?? [];
+      const syncedHabit = decorateHabit(result.syncedEntity);
 
       setCachedHabitQueryData(
         queryClient,
         context.userId,
-        replaceHabit(currentHabits, variables.habitId, decorateHabit(checkedInHabit)),
+        replaceHabit(currentHabits, variables.habitId, syncedHabit),
       );
     },
   });
@@ -225,8 +255,20 @@ export function useCheckInHabit() {
 export function useDeleteHabit() {
   const queryClient = useQueryClient();
 
-  return useMutation<Habit, Error, DeleteHabitInput, RestoreDeletedHabitContext | null>({
-    mutationFn: ({ habitId }) => deleteHabit(habitId),
+  return useMutation<
+    QueueSubmissionResult<never>,
+    Error,
+    DeleteHabitInput,
+    RestoreDeletedHabitContext | null
+  >({
+    mutationFn: ({ habitId }) =>
+      enqueueAndSyncAction(
+        createOfflineAction({
+          targetId: habitId,
+          type: 'DELETE_HABIT',
+          userId: resolveActiveUserId(),
+        }),
+      ),
     onError: (_error, _payload, context) => {
       if (!context) {
         return;
@@ -260,11 +302,6 @@ export function useDeleteHabit() {
         deletedHabit,
         userId,
       };
-    },
-    onSettled: async (_data, _error, _payload, context) => {
-      if (context) {
-        await queryClient.invalidateQueries({ queryKey: habitQueryKeys.list(context.userId) });
-      }
     },
   });
 }

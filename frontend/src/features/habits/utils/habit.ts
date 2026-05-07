@@ -20,6 +20,10 @@ function toUtcDayKey(value: string | Date) {
   return normalizedDate ? normalizedDate.toISOString() : null;
 }
 
+export function getHabitDayKey(value: string | Date = new Date()) {
+  return toUtcDayKey(value);
+}
+
 function getUniqueSortedCompletedDates(completedDates: string[]) {
   const uniqueDates = new Map<string, string>();
 
@@ -150,13 +154,17 @@ export function buildCreateHabitPayload(values: HabitFormValues): CreateHabitPay
   };
 }
 
-export function createOptimisticHabit(payload: CreateHabitPayload, userId: string): HabitListItem {
+export function createOptimisticHabit(
+  payload: CreateHabitPayload,
+  userId: string,
+  habitId = `temp:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+): HabitListItem {
   const now = new Date().toISOString();
 
   return decorateHabit({
     completedDates: [],
     createdAt: now,
-    id: `temp:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    id: habitId,
     isPending: true,
     streak: 0,
     title: payload.title,
