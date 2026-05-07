@@ -37,10 +37,74 @@ function createMailTransporter() {
   return transporter;
 }
 
-async function sendMailPlaceholder(_payload) {
+function getVerificationUrl(token) {
+  return `${env.serverUrl}/api/v1/auth/verify-email/${token}`;
+}
+
+async function sendMail({ html, subject, text, to }) {
   const mailTransporter = createMailTransporter();
 
   if (!mailTransporter) {
+    return {
+      delivered: false,
+      message: 'SMTP credentials are not configured yet.',
+    };
+  }
+
+  await mailTransporter.sendMail({
+    from: env.smtp.from,
+    html,
+    subject,
+    text,
+    to,
+  });
+
+  return {
+    delivered: true,
+    message: 'Email sent successfully.',
+  };
+}
+
+async function sendVerificationEmail({ email, name, token }) {
+  const verificationUrl = getVerificationUrl(token);
+  const subject = 'Verify your Smart Task & Habit Tracker account';
+  const text = [
+    `Hello ${name},`,
+    '',
+    'Please verify your email address by opening the link below:',
+    verificationUrl,
+    '',
+    `This link will expire in ${env.emailVerificationTokenExpiresMinutes} minutes.`,
+  ].join('\n');
+  const html = [
+    `<p>Hello ${name},</p>`,
+    '<p>Please verify your email address by opening the link below:</p>',
+    `<p><a href="${verificationUrl}">${verificationUrl}</a></p>`,
+    `<p>This link will expire in ${env.emailVerificationTokenExpiresMinutes} minutes.</p>`,
+  ].join('');
+
+  const result = await sendMail({
+    html,
+    subject,
+    text,
+    to: email,
+  });
+
+  return {
+    ...result,
+    verificationUrl,
+  };
+}
+
+async function sendMailPlaceholder(_payload) {
+  const result = await sendMail({
+    html: '<p>Mail service placeholder is configured.</p>',
+    subject: 'Mail Placeholder',
+    text: 'Mail service placeholder is configured.',
+    to: env.smtp.from,
+  });
+
+  if (!result.delivered) {
     return {
       message:
         'Mail service placeholder is present, but SMTP credentials still need to be configured.',
@@ -57,6 +121,9 @@ async function sendMailPlaceholder(_payload) {
 
 module.exports = {
   createMailTransporter,
+  getVerificationUrl,
   isMailConfigured,
+  sendMail,
   sendMailPlaceholder,
+  sendVerificationEmail,
 };

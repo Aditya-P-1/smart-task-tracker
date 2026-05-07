@@ -28,14 +28,22 @@ function isValidMongoUri(value) {
   return /^mongodb(\+srv)?:\/\//.test(value);
 }
 
+const port = parsePositiveInteger('PORT', process.env.PORT, 5000);
+
 const env = Object.freeze({
   clientUrls: parseClientUrls(process.env.CLIENT_URL),
+  emailVerificationTokenExpiresMinutes: parsePositiveInteger(
+    'EMAIL_VERIFICATION_TOKEN_EXPIRES_MINUTES',
+    process.env.EMAIL_VERIFICATION_TOKEN_EXPIRES_MINUTES,
+    60,
+  ),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   jwtSecret: process.env.JWT_SECRET || PLACEHOLDER_JWT_SECRET,
   mongoUri:
     process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smart-task-habit-tracker',
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: parsePositiveInteger('PORT', process.env.PORT, 5000),
+  port,
+  serverUrl: process.env.SERVER_URL || `http://localhost:${port}`,
   smtp: {
     from: process.env.SMTP_FROM || 'no-reply@example.com',
     host: process.env.SMTP_HOST || 'smtp.example.com',
