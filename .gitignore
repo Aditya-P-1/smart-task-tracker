@@ -1,0 +1,14 @@
+.DS_Store
+
+# Node modules
+frontend/node_modules
+backend/node_modules
+
+# Env files
+frontend/.env
+frontend/.env.*
+frontend/.env.example
+
+backend/.env
+backend/.env.*
+backend/.env.example
