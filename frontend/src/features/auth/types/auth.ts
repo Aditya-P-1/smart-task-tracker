@@ -19,8 +19,6 @@ export type SignupVerification = {
   emailSent: boolean;
   expiresAt: string;
   message?: string;
-  previewUrl?: string;
-  token?: string;
 };
 
 export type SignupResult = {

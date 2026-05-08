@@ -1,9 +1,7 @@
 import { Link, Redirect, useRouter } from 'expo-router';
 import { useForm } from 'react-hook-form';
-import * as Linking from 'expo-linking';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { normalizeLocalhostUrlForPlatform } from '../../src/config/env';
 import { AuthScreenShell } from '../../src/features/auth/components/auth-screen-shell';
 import { AuthStatusCard } from '../../src/features/auth/components/auth-status-card';
 import { AuthSubmitButton } from '../../src/features/auth/components/auth-submit-button';
@@ -71,7 +69,7 @@ export default function SignupScreen() {
             )}
           />
         ) : null}
-        {signupResult ? <SignupSuccessState result={signupResult} onOpenVerification={(token) => router.push(`/auth/verify-email/${token}`)} /> : null}
+        {signupResult ? <SignupSuccessState result={signupResult} /> : null}
         <AuthTextField
           control={control}
           name="name"
@@ -149,14 +147,9 @@ export default function SignupScreen() {
       {signupResult ? (
         <View style={styles.followUp}>
           <AuthSubmitButton
-            label="I Verified My Email"
+            label="Go to Login After Verification"
             variant="secondary"
-            onPress={() =>
-              router.push({
-                pathname: '/auth/verification-success',
-                params: { email: signupResult.user.email },
-              })
-            }
+            onPress={() => router.push('/auth/login')}
           />
         </View>
       ) : null}
@@ -165,10 +158,8 @@ export default function SignupScreen() {
 }
 
 function SignupSuccessState({
-  onOpenVerification,
   result,
 }: {
-  onOpenVerification: (token: string) => void;
   result: SignupResult;
 }) {
   return (
@@ -179,33 +170,6 @@ function SignupSuccessState({
     >
       <Text style={styles.detailLabel}>Sent to</Text>
       <Text style={styles.detailValue}>{result.user.email}</Text>
-      {result.verification.token ? (
-        <AuthSubmitButton
-          label="Open Verification Link"
-          variant="ghost"
-          onPress={() => {
-            onOpenVerification(result.verification.token as string);
-          }}
-        />
-      ) : result.verification.previewUrl ? (
-        <AuthSubmitButton
-          label="Open Verification Link"
-          variant="ghost"
-          onPress={() => {
-            void Linking.openURL(
-              normalizeLocalhostUrlForPlatform(result.verification.previewUrl as string),
-            );
-          }}
-        />
-      ) : null}
-      {result.verification.token ? (
-        <View style={styles.tokenBlock}>
-          <Text style={styles.tokenLabel}>Development verification token</Text>
-          <Text selectable style={styles.tokenValue}>
-            {result.verification.token}
-          </Text>
-        </View>
-      ) : null}
     </AuthStatusCard>
   );
 }
@@ -243,26 +207,5 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 16,
-  },
-  tokenBlock: {
-    backgroundColor: '#ecfeff',
-    borderColor: '#99f6e4',
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 8,
-    padding: 14,
-  },
-  tokenLabel: {
-    color: '#0f766e',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  tokenValue: {
-    color: '#134e4a',
-    fontFamily: 'Courier',
-    fontSize: 13,
-    lineHeight: 20,
   },
 });

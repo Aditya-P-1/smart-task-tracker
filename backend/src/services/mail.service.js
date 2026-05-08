@@ -3,6 +3,9 @@ const nodemailer = require('nodemailer');
 const { env } = require('../config/env');
 
 let transporter;
+let transporterVerificationResultPromise;
+
+const VERIFICATION_ROUTE_PATH = '/api/v1/auth/verify-email';
 
 function isMailConfigured() {
   const placeholderValues = new Set([
@@ -15,6 +18,26 @@ function isMailConfigured() {
   return ![env.smtp.host, env.smtp.user, env.smtp.pass, env.smtp.from].some((value) =>
     placeholderValues.has(value),
   );
+}
+
+function formatMailErrorForLog(error) {
+  if (!(error instanceof Error)) {
+    return 'Unknown mail transport error.';
+  }
+
+  return `${error.name}: ${error.message}`;
+}
+
+function logMailFailure(context, error) {
+  console.warn(`[mail] ${context} ${formatMailErrorForLog(error)}`);
+}
+
+function logDevelopmentVerificationUrl(verificationUrl) {
+  if (env.nodeEnv === 'production') {
+    return;
+  }
+
+  console.info(`Verification URL:\n${verificationUrl}`);
 }
 
 function createMailTransporter() {
@@ -38,13 +61,24 @@ function createMailTransporter() {
 }
 
 function getVerificationUrl(token) {
-  const path = `auth/verify-email/${token}`;
+  return `${env.serverUrl}${VERIFICATION_ROUTE_PATH}/${token}`;
+}
 
-  if (env.appUrl.endsWith('://')) {
-    return `${env.appUrl}${path}`;
+async function verifyMailTransporter(mailTransporter) {
+  if (transporterVerificationResultPromise) {
+    return transporterVerificationResultPromise;
   }
 
-  return `${env.appUrl}/${path}`;
+  transporterVerificationResultPromise = mailTransporter
+    .verify()
+    .then(() => true)
+    .catch((error) => {
+      transporterVerificationResultPromise = null;
+      logMailFailure('SMTP transporter verification failed.', error);
+      return false;
+    });
+
+  return transporterVerificationResultPromise;
 }
 
 async function sendMail({ html, subject, text, to }) {
@@ -54,16 +88,37 @@ async function sendMail({ html, subject, text, to }) {
     return {
       delivered: false,
       message: 'SMTP credentials are not configured yet.',
+      reason: 'smtp_not_configured',
     };
   }
 
-  await mailTransporter.sendMail({
-    from: env.smtp.from,
-    html,
-    subject,
-    text,
-    to,
-  });
+  const isTransporterVerified = await verifyMailTransporter(mailTransporter);
+
+  if (!isTransporterVerified) {
+    return {
+      delivered: false,
+      message: 'SMTP transporter verification failed.',
+      reason: 'smtp_verification_failed',
+    };
+  }
+
+  try {
+    await mailTransporter.sendMail({
+      from: env.smtp.from,
+      html,
+      subject,
+      text,
+      to,
+    });
+  } catch (error) {
+    logMailFailure('Email delivery failed.', error);
+
+    return {
+      delivered: false,
+      message: 'Email delivery failed.',
+      reason: 'smtp_send_failed',
+    };
+  }
 
   return {
     delivered: true,
@@ -95,6 +150,10 @@ async function sendVerificationEmail({ email, name, token }) {
     text,
     to: email,
   });
+
+  if (!result.delivered) {
+    logDevelopmentVerificationUrl(verificationUrl);
+  }
 
   return {
     ...result,

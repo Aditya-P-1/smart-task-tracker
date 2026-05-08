@@ -38,19 +38,13 @@ function createVerificationSession() {
 function buildVerificationResponse({
   createdNewUser,
   delivery,
-  token,
   verificationExpiresAt,
 }) {
   const response = {
     createdNewUser,
     emailSent: delivery.delivered,
     expiresAt: verificationExpiresAt,
-    previewUrl: delivery.verificationUrl,
   };
-
-  if (!delivery.delivered || env.nodeEnv !== 'production') {
-    response.token = token;
-  }
 
   if (delivery.message) {
     response.message = delivery.message;
@@ -60,7 +54,11 @@ function buildVerificationResponse({
 }
 
 async function sendVerificationForUser({ user, verificationToken }) {
-  let delivery;
+  let delivery = {
+    delivered: false,
+    message: 'Verification email could not be sent. Configure SMTP to enable email delivery.',
+    verificationUrl: getVerificationUrl(verificationToken),
+  };
 
   try {
     delivery = await sendVerificationEmail({
@@ -68,21 +66,25 @@ async function sendVerificationForUser({ user, verificationToken }) {
       name: user.name,
       token: verificationToken,
     });
-  } catch (_error) {
-    if (env.nodeEnv === 'production') {
-      throw new AppError('Unable to send verification email. Please try again later.', 503);
-    }
+  } catch (error) {
+    console.warn(
+      '[auth] Verification email dispatch failed unexpectedly.',
+      error instanceof Error ? error.message : error,
+    );
 
-    delivery = {
-      delivered: false,
-      message:
-        'Verification email could not be sent. Use the returned token locally or configure SMTP.',
-      verificationUrl: getVerificationUrl(verificationToken),
-    };
+    if (env.nodeEnv !== 'production') {
+      console.info(`Verification URL:\n${delivery.verificationUrl}`);
+    }
   }
 
   if (env.nodeEnv === 'production' && !delivery.delivered) {
     throw new AppError('Email delivery is unavailable. Please try again later.', 503);
+  }
+
+  if (!delivery.delivered && env.nodeEnv !== 'production') {
+    console.info(
+      '[auth] Signup completed without SMTP delivery. Use the verification URL logged above to verify the account locally.',
+    );
   }
 
   return delivery;
@@ -140,7 +142,6 @@ async function signup({ email, name, password }) {
     verification: buildVerificationResponse({
       createdNewUser,
       delivery,
-      token: verificationSession.token,
       verificationExpiresAt: verificationSession.expiresAt,
     }),
   };
@@ -206,6 +207,8 @@ async function verifyEmail(token) {
   }
 
   user.isEmailVerified = true;
+  user.emailVerificationTokenExpiresAt = undefined;
+  user.emailVerificationTokenHash = undefined;
   await user.save();
 
   return {
