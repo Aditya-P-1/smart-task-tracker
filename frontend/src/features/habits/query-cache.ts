@@ -39,7 +39,7 @@ export function upsertHabit(habits: HabitListItem[], nextHabit: HabitListItem) {
 
 export async function prefetchHabitList(queryClient: QueryClient, userId: string) {
   return queryClient.prefetchQuery({
-    queryFn: fetchHabits,
+    queryFn: ({ signal }) => fetchHabits({ signal }),
     queryKey: habitQueryKeys.list(userId),
     staleTime: 30_000,
   });

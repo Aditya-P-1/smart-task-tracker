@@ -3,8 +3,14 @@ import type { ApiResponse } from '../../../types/api';
 
 import type { CreateTaskPayload, Task, UpdateTaskPayload } from '../types/task';
 
-export async function fetchTasks() {
-  const response = await apiClient.get<ApiResponse<Task[]>>('/tasks');
+type FetchTasksOptions = {
+  signal?: AbortSignal;
+};
+
+export async function fetchTasks(options: FetchTasksOptions = {}) {
+  const response = await apiClient.get<ApiResponse<Task[]>>('/tasks', {
+    signal: options.signal,
+  });
   return response.data.data;
 }
 

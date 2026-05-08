@@ -18,7 +18,7 @@ let networkSnapshot: NetworkSnapshot = {
 
 function mapStateToSnapshot(state: NetInfoState): NetworkSnapshot {
   const isConnected = Boolean(state.isConnected);
-  const isInternetReachable = state.isInternetReachable ?? isConnected;
+  const isInternetReachable = state.isInternetReachable === true;
 
   return {
     isConnected,

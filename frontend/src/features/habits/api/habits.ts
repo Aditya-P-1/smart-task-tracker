@@ -3,8 +3,14 @@ import type { ApiResponse } from '../../../types/api';
 
 import type { CreateHabitPayload, Habit } from '../types/habit';
 
-export async function fetchHabits() {
-  const response = await apiClient.get<ApiResponse<Habit[]>>('/habits');
+type FetchHabitsOptions = {
+  signal?: AbortSignal;
+};
+
+export async function fetchHabits(options: FetchHabitsOptions = {}) {
+  const response = await apiClient.get<ApiResponse<Habit[]>>('/habits', {
+    signal: options.signal,
+  });
   return response.data.data;
 }
 

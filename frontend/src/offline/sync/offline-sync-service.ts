@@ -26,7 +26,7 @@ import {
 } from '../../features/tasks/query-cache';
 import type { HabitListItem } from '../../features/habits/types/habit';
 import type { TaskListItem } from '../../features/tasks/types/task';
-import { isNetworkOnline } from '../network/network-service';
+import { isNetworkOnline, refreshNetworkSnapshot } from '../network/network-service';
 import { enqueueOfflineAction } from '../queue/action-queue';
 import {
   clearOfflineQueueState,
@@ -459,6 +459,15 @@ function scheduleFailureRecoveryRetry() {
   scheduleOfflineSync(FALLBACK_QUEUE_RECOVERY_DELAY_MS);
 }
 
+async function shouldAttemptImmediateSync() {
+  try {
+    const snapshot = await refreshNetworkSnapshot();
+    return snapshot.isOnline;
+  } catch {
+    return isNetworkOnline();
+  }
+}
+
 export async function processOfflineQueue() {
   if (isSyncInProgress || !isNetworkOnline()) {
     return new Map<string, ProcessQueueActionResult>();
@@ -615,7 +624,7 @@ export async function enqueueAndSyncAction<TEntity>(action: OfflineAction): Prom
     };
   }
 
-  if (!isNetworkOnline()) {
+  if (!(await shouldAttemptImmediateSync())) {
     return {
       status: 'queued',
     };

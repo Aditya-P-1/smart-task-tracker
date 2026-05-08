@@ -70,7 +70,7 @@ export function useHabits() {
     enabled: Boolean(userId),
     initialData: cachedHabits?.habits,
     initialDataUpdatedAt: cachedHabits ? new Date(cachedHabits.updatedAt).getTime() : undefined,
-    queryFn: fetchHabits,
+    queryFn: ({ signal }) => fetchHabits({ signal }),
     queryKey: userId ? habitQueryKeys.list(userId) : habitQueryKeys.all,
     refetchInterval: userId ? 60_000 : false,
     refetchIntervalInBackground: false,
@@ -128,7 +128,7 @@ export function useCreateHabit() {
       );
     },
     onMutate: async ({ clientHabitId, payload, userId }) => {
-      await queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
 
       const previousHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(userId)) ?? [];
@@ -224,7 +224,7 @@ export function useCheckInHabit() {
     onMutate: async ({ habitId }) => {
       const userId = resolveActiveUserId();
 
-      await queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
 
       const previousHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(userId)) ?? [];
@@ -300,7 +300,7 @@ export function useDeleteHabit() {
     onMutate: async ({ habitId }) => {
       const userId = resolveActiveUserId();
 
-      await queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: habitQueryKeys.list(userId) });
 
       const previousHabits =
         queryClient.getQueryData<HabitListItem[]>(habitQueryKeys.list(userId)) ?? [];

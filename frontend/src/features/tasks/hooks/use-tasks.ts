@@ -66,7 +66,7 @@ export function useTasks() {
     enabled: Boolean(userId),
     initialData: cachedTasks?.tasks,
     initialDataUpdatedAt: cachedTasks ? new Date(cachedTasks.updatedAt).getTime() : undefined,
-    queryFn: fetchTasks,
+    queryFn: ({ signal }) => fetchTasks({ signal }),
     queryKey: userId ? taskQueryKeys.list(userId) : taskQueryKeys.all,
     refetchInterval: userId ? 60_000 : false,
     refetchIntervalInBackground: false,
@@ -118,7 +118,7 @@ export function useCreateTask() {
       );
     },
     onMutate: async ({ clientTaskId, payload, userId }) => {
-      await queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
 
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
       const optimisticTask = buildOptimisticTask(payload, userId, clientTaskId);
@@ -199,7 +199,7 @@ export function useUpdateTask() {
     onMutate: async ({ taskId, values }) => {
       const userId = resolveActiveUserId();
 
-      await queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
 
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
       const previousTask = previousTasks.find((task) => task.id === taskId) ?? null;
@@ -278,7 +278,7 @@ export function useDeleteTask() {
     onMutate: async ({ taskId }) => {
       const userId = resolveActiveUserId();
 
-      await queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
+      void queryClient.cancelQueries({ queryKey: taskQueryKeys.list(userId) });
 
       const previousTasks = queryClient.getQueryData<TaskListItem[]>(taskQueryKeys.list(userId)) ?? [];
       const deletedTask = previousTasks.find((task) => task.id === taskId);

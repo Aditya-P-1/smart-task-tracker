@@ -96,7 +96,7 @@ export function buildOptimisticTaskUpdate(task: TaskListItem, values: UpdateTask
 
 export async function prefetchTaskList(queryClient: QueryClient, userId: string) {
   return queryClient.prefetchQuery({
-    queryFn: fetchTasks,
+    queryFn: ({ signal }) => fetchTasks({ signal }),
     queryKey: taskQueryKeys.list(userId),
     staleTime: 30_000,
   });

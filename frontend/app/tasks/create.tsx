@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 
+import { getNetworkSnapshot, refreshNetworkSnapshot } from '../../src/offline/network/network-service';
 import { TaskForm } from '../../src/features/tasks/components/task-form';
 import { TaskScreenShell } from '../../src/features/tasks/components/task-screen-shell';
 import { useCreateTask } from '../../src/features/tasks/hooks/use-tasks';
@@ -17,6 +18,15 @@ export default function CreateTaskScreen() {
     router.replace('/(tabs)/tasks');
   };
 
+  async function shouldSubmitOfflineFirst() {
+    try {
+      const snapshot = await refreshNetworkSnapshot();
+      return !snapshot.isOnline;
+    } catch {
+      return !getNetworkSnapshot().isOnline;
+    }
+  }
+
   return (
     <TaskScreenShell
       description="Capture a new task with a clear title, optional due date, and just enough context for later."
@@ -28,8 +38,16 @@ export default function CreateTaskScreen() {
         isSubmitting={createTaskMutation.isPending}
         onCancel={goBackToTasks}
         onSubmit={async (values) => {
-          await createTaskMutation.mutateAsync(buildCreateTaskPayload(values));
-          router.replace('/(tabs)/tasks');
+          const payload = buildCreateTaskPayload(values);
+
+          if (await shouldSubmitOfflineFirst()) {
+            createTaskMutation.mutate(payload);
+            goBackToTasks();
+            return;
+          }
+
+          await createTaskMutation.mutateAsync(payload);
+          goBackToTasks();
         }}
         submitLabel="Create Task"
         submittingLabel="Creating..."

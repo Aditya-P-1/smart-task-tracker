@@ -2,6 +2,7 @@ import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { AuthSubmitButton } from '../../src/features/auth/components/auth-submit-button';
+import { getNetworkSnapshot, refreshNetworkSnapshot } from '../../src/offline/network/network-service';
 import { useTasks, useUpdateTask } from '../../src/features/tasks/hooks/use-tasks';
 import { TaskForm } from '../../src/features/tasks/components/task-form';
 import { TaskScreenShell } from '../../src/features/tasks/components/task-screen-shell';
@@ -22,6 +23,15 @@ export default function EditTaskScreen() {
 
     router.replace('/(tabs)/tasks');
   };
+
+  async function shouldSubmitOfflineFirst() {
+    try {
+      const snapshot = await refreshNetworkSnapshot();
+      return !snapshot.isOnline;
+    } catch {
+      return !getNetworkSnapshot().isOnline;
+    }
+  }
 
   if (!taskId) {
     return <Redirect href="/(tabs)/tasks" />;
@@ -78,11 +88,19 @@ export default function EditTaskScreen() {
           isSubmitting={updateTaskMutation.isPending}
           onCancel={goBackToTasks}
           onSubmit={async (values) => {
-            await updateTaskMutation.mutateAsync({
+            const payload = {
               taskId,
               values: buildUpdateTaskPayload(values),
-            });
-            router.replace('/(tabs)/tasks');
+            };
+
+            if (await shouldSubmitOfflineFirst()) {
+              updateTaskMutation.mutate(payload);
+              goBackToTasks();
+              return;
+            }
+
+            await updateTaskMutation.mutateAsync(payload);
+            goBackToTasks();
           }}
           submitLabel="Save Changes"
           submittingLabel="Saving..."
