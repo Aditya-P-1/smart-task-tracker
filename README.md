@@ -163,6 +163,17 @@ cp frontend/.env.example frontend/.env
 
 Update the values as needed.
 
+Backend setup checklist:
+- set a real `MONGODB_URI`
+- set a strong random `JWT_SECRET`
+- set `SERVER_URL` to the backend base URL you will actually run
+- set real `SMTP_*` credentials if you want real verification emails delivered
+
+Frontend setup checklist:
+- set `EXPO_PUBLIC_API_URL` to the backend API base URL
+- use `localhost` for local web development
+- use your machine LAN IP when testing on a physical device
+
 ### 4. Start MongoDB
 
 Use either:
@@ -221,6 +232,35 @@ SMTP_PASS=example-password
 SMTP_FROM=no-reply@example.com
 ```
 
+What each backend variable does:
+- `PORT`: backend server port
+- `CLIENT_URL`: comma-separated allowed frontend origins for CORS
+- `APP_URL`: reserved app/deep-link base for future mobile flows
+- `SERVER_URL`: backend base URL used when generating verification links
+- `MONGODB_URI`: MongoDB connection string for local MongoDB or Atlas
+- `JWT_SECRET`: required signing secret for JWT access tokens
+- `JWT_EXPIRES_IN`: access-token lifetime
+- `EMAIL_VERIFICATION_TOKEN_EXPIRES_MINUTES`: email verification token expiry window
+- `SMTP_HOST`: SMTP server host, for example `smtp.gmail.com`
+- `SMTP_PORT`: SMTP port, usually `587` or `465`
+- `SMTP_SECURE`: `true` for SSL/TLS direct connect, usually with port `465`; `false` for STARTTLS, usually with port `587`
+- `SMTP_USER`: SMTP username or sender account
+- `SMTP_PASS`: SMTP password, app password, or SMTP key
+- `SMTP_FROM`: sender email shown in outgoing verification emails
+
+Backend env notes:
+- `SERVER_URL` must match the actual backend URL because verification links are generated from it
+- for real Gmail delivery, use:
+  - `SMTP_HOST=smtp.gmail.com`
+  - `SMTP_PORT=587`
+  - `SMTP_SECURE=false`
+  - `SMTP_USER=<your-gmail-address>`
+  - `SMTP_PASS=<your-google-app-password>`
+  - `SMTP_FROM=<your-gmail-address>`
+- if `SMTP_*` is left as placeholder values in development, signup still works and the backend logs the verification URL to the terminal instead of crashing
+- never commit real `.env` files with MongoDB, SMTP, or JWT secrets
+- rotate any credential that has been exposed or pasted into chat, email, or screenshots
+
 ### Frontend
 
 Defined in [frontend/.env.example](./frontend/.env.example):
@@ -229,10 +269,14 @@ Defined in [frontend/.env.example](./frontend/.env.example):
 EXPO_PUBLIC_API_URL=http://localhost:5000/api/v1
 ```
 
-Note:
-- use `localhost` for web/local development
-- use your machine LAN IP for a physical device
-- Android emulator local API access is handled by the app configuration layer
+What the frontend variable does:
+- `EXPO_PUBLIC_API_URL`: backend API base URL used by Axios
+
+Frontend env notes:
+- use `localhost` for local web development
+- use your machine LAN IP for a physical device, for example `http://192.168.1.10:5000/api/v1`
+- Android emulator local API access is normalized by the frontend env/config layer
+- if you change env values, restart Expo so the new values are picked up
 
 ## Offline-First Architecture
 
